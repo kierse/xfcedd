@@ -1,0 +1,13 @@
+Ideas for new rotate_image:
+---------------------------
+
+- have running daemon grab socket when it starts.  This will allow 
+for 2 things:
+  a) whenever rotate_image starts it can check if there is another
+     instance running.  If so, it can notify the caller and exit
+  b) can call running process and pass instructions through socket
+     ie. exit, change sleep time, pick random image, display specific
+	      image, etc.
+
+- have daemon keep log of previous X images so it can ensure there are
+no repeats.

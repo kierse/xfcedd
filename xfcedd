@@ -1,0 +1,252 @@
+#!/usr/bin/perl -w
+
+use strict;
+use IO::Socket::INET;
+use POSIX;
+
+# daemon variables
+#
+my ($delay, $file, $dir, $log, $max_log_count) = ("", "", "", 1, 50);
+my $version = "Version 0.1\n";
+my $path = $ENV{'HOME'} . "/.xfce4/.xfcedd=";
+
+# if server is already running and user sent no arguments, exit
+#
+if( -e $path && (scalar @ARGV == 0) ) { exit; }
+
+# if server is running and user is attempting to query server
+#
+if( -e $path && (scalar @ARGV > 0) )
+{
+	# interpret user request and query server
+	#
+	my $cmd;
+	if($ARGV[0] =~ /-v|--version/i)
+	{ 
+		print $version;
+	}
+	elsif($ARGV[0] =~ /-k|--kill/i)
+	{
+		$cmd = $ARGV[0] . "\n";
+	}
+	else
+	{
+		$cmd = join(" ", @ARGV) . "\n";
+	}
+
+	if($cmd)
+	{
+		# get port of running server
+		#
+		open(PORT, "<", $path);
+		my $port = <PORT>;
+		close(PORT);
+	
+		# open a socket to running server
+		#
+		my $socket = new IO::Socket::INET
+		(
+			PeerAddr => "Localhost",
+			PeerPort => $port,
+			Proto    => "tcp",
+			Type     => SOCK_STREAM,
+		) or die "Couldn't open connection to server: $!\n";
+	
+		# send request to server
+		#
+		print $socket $cmd;
+		
+		# read response and print to console
+		#
+		my $response = <$socket>;
+		print $response;
+	
+		# close socket
+		#
+		close($socket);
+	}
+}
+
+# no server running!  Start up xfcedd daemon 
+#
+else
+{
+	# update variables with command line options
+	#
+	updateVariables(\$delay, \$file, \$dir, \$log, \$max_log_count, @ARGV);
+
+#	# need to fork off child process that is
+#	# not associated with the process that started the parent
+#	#
+#	my $pid = fork;
+#	exit if $pid;
+#	die "Couldn't fork: $!" unless defined($pid);
+#	
+#	# Dissociate from the controlling terminal that started parent
+#	# and stop being part of whatever process group we had been a member of.
+#	#
+#	POSIX::setsid() or die "Can't start a new session: $!";
+	
+	# trap fatal signals and set flag indicating we need to exit gracefully
+	#
+	my $keep_running = 1;
+	sub signal_handler { $keep_running = 0; }
+	
+#	sub alarm_handler
+#	{
+#		print "time to change picture!\n";
+#	}
+	
+	# trap or ignore $SIG{PIPE}
+	#
+	$SIG{INT} = $SIG{TERM} = $SIG{HUP} = \&signal_handler;
+#	$SIG{ALRM} = \&alarm_handler;
+
+#	alarm(10);
+
+	# acquire socket
+	#
+	my $server = new IO::Socket::INET(
+		Type      => SOCK_STREAM,
+		Reuse     => 1,
+		Listen    => 10
+	) or die "Couldn't acquire socket: $!\n";
+	
+	# write out temporary file with port number
+	#
+	my $socketPort = $server->sockport();
+	my $path = $ENV{'HOME'} . "/.xfce4/.xfcedd=";
+	open(PORT, ">", $path);
+	print PORT $socketPort;
+	close(PORT);
+	
+	# loop and wait for a client connection
+	#
+	while( $keep_running && (my $client = $server->accept()) )
+	{
+		# $client is the new connection...
+		#
+		#my $socket_address = $client->sockname();
+		#my ($port, $myaddr)   = sockaddr_in($socket_address);
+
+		# get request from client
+		#
+		my $cmd = <$client>;
+
+		if($cmd =~ /-k|--kill/i)
+		{
+			$keep_running = 0;
+			print $client "1\n";
+		}
+		else
+		{
+			my $result = updateVariables(\$delay, \$file, \$dir, \$log, \$max_log_count, split(" ", $cmd));
+			print $client $result;
+
+			print "time: $delay\n" .
+					"file: $file\n" .
+					"dir: $dir\n" .
+					"log: $log\n" .
+					"max_log_count: $max_log_count\n";
+		}
+		
+		# close client connection
+		#
+		close($client);
+	}
+	
+	# delete the file pointing to the port
+	#
+	unlink($path);
+	
+	# close the open socket
+	#
+	close($server);
+}
+
+sub updateVariables
+{
+	my ($delay, $file, $dir, $log, $max_log_count, @Args) = @_;
+
+	# parse through given array and update given values
+	#
+	for(my $i = 0; $i < scalar @Args; $i++)
+	{
+		# update delay value
+		if($Args[$i] =~ /-t|--time/i)
+		{ 
+			my $data = $Args[$i+1];
+			$data >= 0
+				and $$delay = $data
+				and $i++;
+		}
+
+		# update file value
+		elsif($Args[$i] =~ /-f|--file/i)
+		{
+			my $data = $Args[$i+1];
+			$data =~ /^\w+\.(gif|png|jpg)$/
+				and $$file = $data
+				and $i++;
+		}
+
+		# update directory value
+		elsif($Args[$i] =~ /-d|--dir/i)
+		{
+			my $data = $Args[$i+1];
+			$$dir = $data
+				and $i++;
+		}
+
+		# update log value
+		elsif($Args[$i] =~ /^--log$/i)
+		{
+			my $data = $Args[$i+1];
+			($data == 0 || $data == 1)
+				and $$log = $data
+				and $i++;
+		}
+
+		# update max log count value
+		elsif($Args[$i] =~ /^--max_log_count$/i)
+		{
+			my $data = $Args[$i+1];
+			($data >= 0 && $data <= 100)
+				and $$max_log_count = $data
+				and $i++;
+		}
+
+		# oops, unknown command line parameter
+		else 
+		{ 
+			return "Error - Unknown parameter: $Args[$i]\n"; 
+		}
+	}
+
+	return "1\n";
+}
+
+sub updateDesktop
+{
+	my ($dir, $file) = @_;
+
+	# use image if given
+	#
+	my $path = $dir;
+	if(defined($file))
+	{
+		$path += "/" . $file;
+	}
+	
+	# open directory and randomly choose a new image
+	#
+	else
+	{
+
+	}
+
+	# call xfdesktop and update image
+	#
+	system("ln -sf $path $ENV['HOME'}/.xfce4/.desktopImage");
+	system("xfdesktop");
+}
