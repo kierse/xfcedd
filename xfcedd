@@ -43,57 +43,59 @@ my $version = "0.2.1";
 my $path = $ENV{'HOME'} . "/.xfce4/.xfcedd=";
 my $log_file = $ENV{'HOME'} . "/.xfce4/xfcedd.log";
 
+# check if user is requesting help or versioning information
+#
+if($ARGV[0] =~ /(^-v$)|(^-h$)/i)
+{
+	displayOptions();
+}
+
+# if server is not running and user sent kill flag, throw error
+#
+elsif( !(-e $path) && $ARGV[0] eq "-k") { displayOptions("Error: Server is not running.\n"); }
+
 # if server is already running and user sent no arguments, exit
 #
-if( -e $path && (scalar @ARGV == 0) ) { exit; }
+elsif( -e $path && (scalar @ARGV == 0) ) { exit; }
 
 # if server is running and user is attempting to query server
 #
 elsif( -e $path && (scalar @ARGV > 0) )
 {
-	# check if user is requesting server version
+	# verify user didn't enter non-existent command
+	# line option(s).
 	#
-	if($ARGV[0] =~ /^-v$/i)
-	{ 
-		displayOptions();
-	}
-	else
-	{
-		# verify user didn't enter non-existent command
-		# line option(s).
-		#
-		my ($code, $message) = checkCommandLineOptions(@ARGV);
-		exit displayOptions($message) unless $code;
+	my ($code, $message) = checkCommandLineOptions(@ARGV);
+	exit displayOptions($message) unless $code;
 
-		# get port of running server
-		#
-		open(PORT, "<", $path);
-		my $port = <PORT>;
-		close(PORT);
+	# get port of running server
+	#
+	open(PORT, "<", $path);
+	my $port = <PORT>;
+	close(PORT);
+
+	# open a socket to running server
+	#
+	my $socket = new IO::Socket::INET
+	(
+		PeerAddr => "Localhost",
+		PeerPort => $port,
+		Proto    => "tcp",
+		Type     => SOCK_STREAM,
+	) or die "Couldn't open connection to server: $!\n";
+
+	# send request to server
+	#
+	print $socket $message;
 	
-		# open a socket to running server
-		#
-		my $socket = new IO::Socket::INET
-		(
-			PeerAddr => "Localhost",
-			PeerPort => $port,
-			Proto    => "tcp",
-			Type     => SOCK_STREAM,
-		) or die "Couldn't open connection to server: $!\n";
-	
-		# send request to server
-		#
-		print $socket $message;
-		
-		# read response and print to console
-		#
-		($code, $message) = split ":", <$socket>;
-		print displayOptions($message) unless $code;
-	
-		# close socket
-		#
-		close($socket);
-	}
+	# read response and print to console
+	#
+	($code, $message) = split ":", <$socket>;
+	print displayOptions($message) unless $code;
+
+	# close socket
+	#
+	close($socket);
 }
 
 # no server running!  Start up xfcedd daemon 
@@ -254,6 +256,10 @@ sub checkCommandLineOptions
 		{ 
 			# this is empty on purpose #
 		}
+		elsif($Args[$i] eq "-n")
+		{
+			return (1, "n\n");
+		}
 		elsif($Args[$i] eq "-t")
 		{
 			$flag = "t";
@@ -310,10 +316,16 @@ sub updateRunTimeVariables
 		# split up pair into flag and data
 		#
 		my ($flag, $data) = split ":", $pair;
+		$data ||= "";
 		$data =~ s/\n//;
 	
+		if($flag eq "n")
+		{
+			# this is empty on purpose #
+		}
+			
 		# update delay value
-		if($flag eq "t")
+		elsif($flag eq "t")
 		{ 
 			$data >= 0 and $$Vars{"delay"} = $data;
 		}
@@ -371,14 +383,16 @@ sub displayOptions
 			"-----------------------------------------------------------------------------\n" .
 			"xfcedd " . $version . " by Kier Elliott.\n" .
 			"This software comes with ABSOLUTELY NO WARRANTY.\n" .
-			"Usage:  xfcedd [-k | -v | -t <time_delay> -d <image_directory> -f <file_name>\n" .
-			"                          -l <boolean> -s <log_size> ]\n" . 
+			"Usage:  xfcedd [-k | -v | -h | -n | -t <time_delay> -d <image_directory>\n" .
+			"                          -f <file_name> -l <boolean> -s <log_size> ]\n" . 
 			"   (Put filenames or directories in single quotes (') )\n" .
 			"   -k   Kill running daemon\n" .
 			"   -v   Print our version information\n" .
+			"   -h   Display this message\n" .
 			"   -t   Set time delay (in seconds) daemon waits before choosing new image\n" .
 			"   -f   Set current/startup image.\n" .
 			"   -d   Set current/startup image directory.\n" .
+			"   -n   Instruct daemon to select next random image and reset timer\n" .
 			"   -l   Turn logging on (1) or off (0).\n" .
 			"   -s   Set size of log, must be between 0 and 100.\n" .
 			"\n";
