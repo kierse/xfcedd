@@ -189,9 +189,6 @@ sub clientHandler
 	# get request from client
 	#
 	my $cmd = <$client>;
-
-print "client command: $cmd";
-
 	$cmd =~ s/\n//;
 
 	if($cmd eq "k")
