@@ -27,3 +27,5 @@ use regular expression style pattern matching on entered text
 hard coding it
 - update logging capabilities to log all actions taken/experienced
   by the server.
+- make sure xfdesktop is running before setting a new image and calling
+  it.
