@@ -9,3 +9,21 @@ TODO:
   have daemon exit when X is no longer running.
 - use Gtk2 and create a toolbar image that allows user to manipulate
   various parameters.
+- use Gtk2 and create a toolbar image that allows user to manipulate
+  various parameters.
+- check to make sure that when a user passes the -n, -v, -h flags 
+and the server isn't running that it either starts or does something
+else appropriate to the situation
+- change behaviour when .xfcedd= file exists in .xfce4 folder but 
+there is nothing listening on that port.  App could start anyway or
+throw an error and show help.  Help could include command to delete
+existing .xfcedd= file.
+- when a directory is specified, program should be able to use all 
+images, including those in sub directories
+- when picking a specific image to display, incorporation ability to 
+use regular expression style pattern matching on entered text
+- make sure .config/xfce4/xfcedd directory exists
+- make variable that contains location of symbolic image link instead of
+hard coding it
+- update logging capabilities to log all actions taken/experienced
+  by the server.

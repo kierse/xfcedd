@@ -1,7 +1,7 @@
 #!/usr/bin/perl -w
 
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
-#
+
 #   Application:    xfcedd (Xfce Desktop Daemon)
 #
 #   Author:         Kier Elliott
@@ -40,8 +40,8 @@ my %Vars = (
 );
 
 my $version = "0.2.1";
-my $path = $ENV{'HOME'} . "/.xfce4/.xfcedd=";
-my $log_file = $ENV{'HOME'} . "/.xfce4/xfcedd.log";
+my $path = $ENV{'HOME'} . "/.config/xfce4/xfcedd/.xfcedd=";
+my $log_file = $ENV{'HOME'} . "/.config/xfce4/xfcedd/xfcedd.log";
 
 # check if user is requesting help or versioning information
 #
@@ -148,7 +148,6 @@ else
 	# write out temporary file with port number
 	#
 	my $socketPort = $server->sockport();
-	my $path = $ENV{'HOME'} . "/.xfce4/.xfcedd=";
 	open(PORT, ">", $path);
 	print PORT $socketPort;
 	close(PORT);
@@ -479,7 +478,7 @@ sub _refreshDesktop
 
 	# call xfdesktop and update image
 	#
-	system("ln -sf \'$file\' $ENV{HOME}/.xfce4/.desktopImage");
+	system("ln -sf \'$file\' $ENV{HOME}/.config/xfce4/xfcedd/.desktopImage");
 	system("xfdesktop");
 
 	return undef;
