@@ -102,7 +102,6 @@ else
 	#
 	updateRunTimeVariables($message, \%Vars);
 
-
 			print "time: " . $Vars{"time"} . "\n" .
 					"file: " . $Vars{"file"} . "\n" .
 					"dir: " .  $Vars{"directory"} . "\n" .
@@ -165,7 +164,14 @@ else
 					"file: " . $Vars{"file"} . "\n" .
 					"dir: " .  $Vars{"directory"} . "\n" .
 					"log: " . $Vars{"log"} . "\n" .
-					"max_log_count: " . $Vars{"size"} . "\n";
+					"max_log_count: " . $Vars{"size"} . "\n" .
+					"cache: \n";
+
+			foreach my $image ( @{$Vars{"cache"}} )
+			{
+				print $image . "\n";
+			}
+
 		}
 		
 		# close client connection
@@ -208,7 +214,7 @@ sub checkCommandLineOptions
 		{
 			$flag = "f";
 			$data = $Args[++$i];
-			return (0, "Error: Illegal value $data - must be a valid image\n") unless $data =~ /^\w+\.(gif|png|jpg|jpeg)$/i;
+			return (0, "Error: Illegal value $data - must be a valid image\n") unless $data =~ /(gif|png|jpg|jpeg)$/i;
 		}
 		elsif($Args[$i] eq "-d")
 		{
@@ -239,53 +245,45 @@ sub checkCommandLineOptions
 	return (1, join(",", @Query) . "\n");
 }
 
-sub displayOptions
-{
-	my ($error) = @_;
-	$error ||= "";
-	
-	# print out command line options in friendly,
-	# human readable format
-	# 
-	print $error .
-			"-----------------------------------------------------------------------------\n" .
-			"xfcedd " . $Vars{"version"} . " by Kier Elliott.\n" .
-			"This software comes with ABSOLUTELY NO WARRANTY.\n" .
-			"Usage:  xfcedd [-k | -v | -t <time_delay> -f <file_name> -d <image_directory>\n" . 
-			"        (Put filenames or directories in single quotes (') )\n" .
-			"        -k   Kill running daemon\n" .
-			"        -v   Print our version information\n" .
-			"        -t   Set time delay daemon waites before choosing new image\n" .
-			"        -f   Set current/startup image.\n" .
-			"        -d   Set current/startup image directory.\n" .
-			"\n";
-}
-
 sub updateRunTimeVariables
 {
 	my ($cmd, $Vars) = @_;
+	my $update = 0;
+
+	# if given cmd is empty, return
+	#
+	return if $cmd =~ /^\n?$/;
 
 	# parse through given array and update given values
 	#
-	#for(my $i = 0; $i < scalar @{$Args}; $i++)
 	foreach my $pair (split ",", $cmd)
 	{
 		# split up pair into flag and data
 		#
 		my ($flag, $data) = split ":", $pair;
-
 		$data =~ s/\n//;
 	
 		# update delay value
 		if($flag eq "t")
 		{ 
-			$data >= 0 and $$Vars{"time"} = $data;
+			$data >= 0 
+				and $$Vars{"time"} = $data 
+				and $update = 1;
 		}
 
 		# update file value
 		elsif($flag eq "f")
 		{
-			$data =~ /^\w+\.(gif|png|jpg|jpeg)$/i and $$Vars{"file"} = $data;
+			if(-e $data)
+			{
+				$$Vars{"file"} = $data;
+				$update = 1;
+			}
+			elsif(-e $$Vars{"directory"} . "/" . $data)
+			{
+				$$Vars{"file"} = $$Vars{"directory"} . "/" . $data;
+				$update = 1;
+			}
 		}
 
 		# update directory value
@@ -313,13 +311,62 @@ sub updateRunTimeVariables
 		}
 	}
 
+	# if update flag is set, try and 
+	# update desktop image
+	#
+	if($update)
+	{
+		updateDesktop($Vars);
+	}
+
 	return "1\n";
 }
 
-sub chooseRandomImage
+sub displayOptions
 {
-	my ($dir, $Cache) = @_;
-	my $file;
+	my ($error) = @_;
+	$error ||= "";
+	
+	# print out command line options in friendly,
+	# human readable format
+	# 
+	print $error .
+			"-----------------------------------------------------------------------------\n" .
+			"xfcedd " . $Vars{"version"} . " by Kier Elliott.\n" .
+			"This software comes with ABSOLUTELY NO WARRANTY.\n" .
+			"Usage:  xfcedd [-k | -v | -t <time_delay> -f <file_name> -d <image_directory>\n" . 
+			"        (Put filenames or directories in single quotes (') )\n" .
+			"        -k   Kill running daemon\n" .
+			"        -v   Print our version information\n" .
+			"        -t   Set time delay daemon waites before choosing new image\n" .
+			"        -f   Set current/startup image.\n" .
+			"        -d   Set current/startup image directory.\n" .
+			"\n";
+}
+
+sub updateDesktop
+{
+	my ($Vars) = @_;
+
+	# get new image
+	#
+	my $file = _chooseImage($$Vars{"directory"}, $$Vars{"file"}, $$Vars{"cache"});
+
+	# update desktop using new image...
+	#
+	_refreshDesktop($file);
+
+	# cache image selection
+	#
+	_updateCache($file, $$Vars{"log"}, $$Vars{"size"}, $$Vars{"cache"});
+
+	# reset time delay counter...
+	#
+}
+
+sub _chooseImage
+{
+	my ($dir, $file, $Cache) = @_;
 	
 	# get a directory listing of all images in given directory
 	# remove '.', '..', and all files that aren't gif, png, or jpg
@@ -347,23 +394,23 @@ sub chooseRandomImage
 			my $rand = rand $max;
 			$file = "$dir/" . $Files[$rand];
 		}
-		while( checkCache("$dir/$file", $max, $Cache) || ($count++ < $max) );
+		while( _checkCache("$dir/$file", $max, $Cache) || ($count++ < $max) );
 	}
 
 	return $file;
 }
 
-sub updateDesktop
+sub _refreshDesktop
 {
 	my ($file) = @_;
 
 	# call xfdesktop and update image
 	#
-	system("ln -sf $file $ENV{HOME}/.xfce4/.desktopImage");
+	system("ln -sf \'$file\' $ENV{HOME}/.xfce4/.desktopImage");
 	system("xfdesktop");
 }
 
-sub checkCache
+sub _checkCache
 {
 	my ($file, $depth, $Cache) = @_;
 
@@ -372,12 +419,17 @@ sub checkCache
 		return 0 if $$Cache[$i] eq $file;
 	}
 
-	return 0;
+	return 1;
 }
 
-sub updateCache
+sub _updateCache
 {
-	my ($file, $max, $Cache) = @_;
+	my ($file, $log, $max, $Cache) = @_;
+	
+foreach my $image ( @{$Cache} )
+{
+	print $image ."\n";
+}
 	
 	my $size = scalar @{$Cache};
 	if($size > $max)
@@ -396,4 +448,10 @@ sub updateCache
 	# push new file onto cache list
 	#
 	push @{$Cache}, $file;
+
+foreach my $image ( @{$Cache} )
+{
+	print $image ."\n";
+}
+	
 }
