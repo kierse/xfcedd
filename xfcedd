@@ -1,5 +1,29 @@
 #!/usr/bin/perl -w
 
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+#
+#   Application:    xfcedd (Xfce Desktop Daemon)
+#
+#   Author:         Kier Elliott
+#
+#   Date:           01/02/2005
+#
+#   Description:    The xdce desktop daemon was designed to add a 
+#                   little flavor to the xfce desktop.  It allows a user
+#                   to specify a directory of desktop images to choose
+#                   from.  The Daemon will then randomly select an image
+#                   (after a specified delay) and update the Xfce desktop.
+#
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+#
+#   Subversion Info:
+#     $LastChangedBy$
+#     $Date$
+#     $Rev$
+#     $URL$
+#
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+
 use strict;
 use POSIX;
 use IO::Socket::INET;
