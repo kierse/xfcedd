@@ -37,7 +37,7 @@ my %Vars = (
 	"log" => 1,
 	"size" => 50,
 	"cache" => [],
-	"version" => "0.2.0",
+	"version" => "0.2.1",
 );
 
 my $version = "0.2.0";
@@ -189,6 +189,9 @@ sub clientHandler
 	# get request from client
 	#
 	my $cmd = <$client>;
+
+print "client command: $cmd";
+
 	$cmd =~ s/\n//;
 
 	if($cmd eq "k")
@@ -207,6 +210,11 @@ sub clientHandler
 	# close client connection
 	#
 	close($client);
+
+	# add the event listener, have to do this or
+	# listener will only work once!
+	#
+	$e->add();
 }
 
 sub timerHandler

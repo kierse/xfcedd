@@ -1,3 +1,7 @@
 TODO:
 -----
 - check given directory to ensure there are image files
+- add commandline option tell server to pick next random image
+  without having to use -t flag
+- update commandline options to use the more standards compliant
+  format
