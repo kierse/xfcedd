@@ -198,13 +198,6 @@ sub timerHandler
 	# update display!
 	#
 	updateDesktop($Events, $Vars);
-
-	print "[\n";
-	foreach my $image (@{$$Vars{"cache"}})
-	{
-		print $image . "\n";
-	}
-	print "]\n\n";
 }
 
 sub terminateEventWatchers
