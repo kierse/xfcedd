@@ -37,10 +37,9 @@ my %Vars = (
 	"log" => 1,
 	"size" => 50,
 	"cache" => [],
-	"version" => "0.2.1",
 );
 
-my $version = "0.2.0";
+my $version = "0.2.1";
 my $path = $ENV{'HOME'} . "/.xfce4/.xfcedd=";
 my $log_file = $ENV{'HOME'} . "/.xfce4/xfcedd.log";
 
@@ -156,7 +155,7 @@ else
 	#
 	my %Events;
 	%Events = (
-		"main"  => event_new($server, Event::Lib->EV_READ(), \&clientHandler, \%Events, \%Vars),
+		"main"  => event_new($server, Event::Lib->EV_READ, \&clientHandler, \%Events, \%Vars),
    	"timer" => timer_new(sub { timerHandler(\%Events, \%Vars); }),
    	"int"   => signal_new(SIGINT, sub { terminateEventWatchers(\%Events); }),
    	"term"  => signal_new(SIGTERM, sub { terminateEventWatchers(\%Events); }),
@@ -169,7 +168,7 @@ else
 
 	# start event loop!
 	#
-   $Events{"main"}->dispatch;	
+   event_dispatch();	
 
 	# delete the file pointing to the port
 	#
@@ -211,7 +210,7 @@ sub clientHandler
 	# add the event listener, have to do this or
 	# listener will only work once!
 	#
-	$e->add();
+	$e->add() unless $cmd eq "k";
 }
 
 sub timerHandler
