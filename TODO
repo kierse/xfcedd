@@ -29,3 +29,19 @@ hard coding it
   by the server.
 - make sure xfdesktop is running before setting a new image and calling
   it.
+
+NEW
+---
+- rewrite xfcedd to use xfce list file
+- create user config file xfcedd.xml and store it in xfce config folder
+  (.config/xfce4)
+- maintain dynamic list of images/folders.  When xfdesktop queries
+  xfcedd list file, xfcedd (which is listening on filehandler), returns
+  a list of the files to choose from.  This way the user can pick a 
+  specific image and the daemon can remove images from the list as 
+  they are used.
+- can there be a file pointing to a non existent file that xfdesktop 
+  reads from?  Just like the /proc system in Linux.  The file doesn't
+  actually exist but it can be read from.  When something tries to 
+  read from it, the process holding the file (in this case xfcedd) would
+  return the current data.
