@@ -6,8 +6,15 @@ use POSIX;
 
 # daemon variables
 #
-my ($delay, $file, $dir, $log, $max_log_count) = ("", "", "", 1, 50);
-my $version = "Version 0.1\n";
+#my ($delay, $file, $dir, $log, $max_log_count) = ("", "", "", 1, 50);
+my %Vars = (
+	"t" => "",
+	"f" => "",
+	"d" => "",
+	"l" => 1,
+	"c" => 50,
+);
+my $version = "0.1.0";
 my $path = $ENV{'HOME'} . "/.xfce4/.xfcedd=";
 
 # if server is already running and user sent no arguments, exit
@@ -16,26 +23,27 @@ if( -e $path && (scalar @ARGV == 0) ) { exit; }
 
 # if server is running and user is attempting to query server
 #
-if( -e $path && (scalar @ARGV > 0) )
+elsif( -e $path && (scalar @ARGV > 0) )
 {
-	# interpret user request and query server
+	# check if user is requesting server version
 	#
-	my $cmd;
-	if($ARGV[0] =~ /-v|--version/i)
+	if($ARGV[0] =~ /^-v$/i)
 	{ 
-		print $version;
-	}
-	elsif($ARGV[0] =~ /-k|--kill/i)
-	{
-		$cmd = $ARGV[0] . "\n";
+		displayOptions();
 	}
 	else
 	{
-		$cmd = join(" ", @ARGV) . "\n";
-	}
+		# verify user didn't enter non-existent command
+		# line option(s).
+		#
+		checkCommandLineOptions(@ARGV)
+			or exit displayOptions();
 
-	if($cmd)
-	{
+		# using argument flags, build string to query
+		# server with
+		#
+		my $cmd = buildQuery(@ARGV);
+
 		# get port of running server
 		#
 		open(PORT, "<", $path);
@@ -71,22 +79,6 @@ if( -e $path && (scalar @ARGV > 0) )
 #
 else
 {
-	# update variables with command line options
-	#
-	updateVariables(\$delay, \$file, \$dir, \$log, \$max_log_count, @ARGV);
-
-#	# need to fork off child process that is
-#	# not associated with the process that started the parent
-#	#
-#	my $pid = fork;
-#	exit if $pid;
-#	die "Couldn't fork: $!" unless defined($pid);
-#	
-#	# Dissociate from the controlling terminal that started parent
-#	# and stop being part of whatever process group we had been a member of.
-#	#
-#	POSIX::setsid() or die "Can't start a new session: $!";
-	
 	# trap fatal signals and set flag indicating we need to exit gracefully
 	#
 	my $keep_running = 1;
@@ -104,6 +96,28 @@ else
 
 #	alarm(10);
 
+	# verify user didn't enter non-existent command
+	# line option(s).
+	#
+	checkCommandLineOptions(@ARGV)
+		or exit displayOptions();
+
+	# update variables with command line options
+	#
+	updateRunTimeVariables(\%Vars, \@ARGV);
+
+#	# need to fork off child process that is
+#	# not associated with the process that started the parent
+#	#
+#	my $pid = fork;
+#	exit if $pid;
+#	die "Couldn't fork: $!" unless defined($pid);
+#	
+#	# Dissociate from the controlling terminal that started parent
+#	# and stop being part of whatever process group we had been a member of.
+#	#
+#	POSIX::setsid() or die "Can't start a new session: $!";
+	
 	# acquire socket
 	#
 	my $server = new IO::Socket::INET(
@@ -132,22 +146,23 @@ else
 		# get request from client
 		#
 		my $cmd = <$client>;
-
-		if($cmd =~ /-k|--kill/i)
+	
+		print "Client request: $cmd";
+		if($cmd =~ /^-k$/i)
 		{
 			$keep_running = 0;
 			print $client "1\n";
 		}
 		else
 		{
-			my $result = updateVariables(\$delay, \$file, \$dir, \$log, \$max_log_count, split(" ", $cmd));
+			my $result = updateRunTimeVariables(\%Vars, split(" ", $cmd));
 			print $client $result;
 
-			print "time: $delay\n" .
-					"file: $file\n" .
-					"dir: $dir\n" .
-					"log: $log\n" .
-					"max_log_count: $max_log_count\n";
+#			print "time: $delay\n" .
+#					"file: $file\n" .
+#					"dir: $dir\n" .
+#					"log: $log\n" .
+#					"max_log_count: $max_log_count\n";
 		}
 		
 		# close client connection
@@ -164,7 +179,86 @@ else
 	close($server);
 }
 
-sub updateVariables
+sub checkCommandLineOptions
+{
+	my (@Args) = @_;
+
+	for(my $i = 0; $i < scalar @Args; $i++)
+	{
+		if($Args[$i] eq "-k") { }
+		elsif($Args[$i] eq "-v") { }
+		elsif($Args[$i] eq "-t")
+		{
+			return 0 unless $Args[++$i] =~ /^\d+$/;
+		}
+		elsif($Args[$i] eq "-f")
+		{
+			return 0 unless $Args[++$i] =~ /^\w+\.(gif|png|jpg|jpeg)$/i;
+		}
+		elsif($Args[$i] eq "-d")
+		{
+			return 0 if $Args[++$i] =~ /^-+(\w+)?$/i;
+		}
+		else
+		{
+			return 0;
+		}
+	}
+
+	return 1;
+}
+
+sub buildQuery
+{
+	my (@Args) = @_;
+	my $query;
+
+	for(my $i = 0; $i < scalar @Args; $i++)
+	{
+		if($Args[$i] eq "-k")
+		{ 
+			return "-k\n";
+		}
+		elsif($Args[$i] eq "-v")
+		{
+			# this is empty on purpose #
+		}
+		elsif($Args[$i] eq "-t")
+		{
+			$query .= "-t " . $Args[++$i];
+		}
+		elsif($Args[$i] eq "-f")
+		{
+			$query .= "-f " . $Args[++$i];
+		}
+		elsif($Args[$i] eq "-d")
+		{
+			$query .= "-d " . $Args[++$i];
+		}
+	}
+	
+	return "$query\n";
+}
+
+sub displayOptions
+{
+	# print out command line options in friendly,
+	# human readable format
+	# 
+	print "-----------------------------------------------------------------------------\n" .
+			"xfcedd $version by Kier Elliott.\n" .
+			"This software comes with ABSOLUTELY NO WARRANTY.\n" .
+			"Usage:  xfcedd [-k | -v | -t <time_delay> -f <file_name> -d <image_directory>\n" . 
+			"        (Put filenames or directories in single quotes (') )\n" .
+			"        -k   Kill running daemon\n" .
+			"        -v   Print our version information\n" .
+			"        -t   Set time delay daemon waites before choosing new image\n" .
+			"        -f   Set current/startup image.\n" .
+			"        -d   Set current/startup image directory.\n" .
+			"\n";
+}
+
+sub updateRunTimeVariables
 {
 	my ($delay, $file, $dir, $log, $max_log_count, @Args) = @_;
 
@@ -185,7 +279,7 @@ sub updateVariables
 		elsif($Args[$i] =~ /-f|--file/i)
 		{
 			my $data = $Args[$i+1];
-			$data =~ /^\w+\.(gif|png|jpg)$/
+			$data =~ /^\w+\.(gif|png|jpg)$/i
 				and $$file = $data
 				and $i++;
 		}
@@ -226,27 +320,84 @@ sub updateVariables
 	return "1\n";
 }
 
+sub chooseRandomImage
+{
+	my ($dir, $Cache) = @_;
+	my $file;
+	
+	# get a directory listing of all images in given directory
+	# remove '.', '..', and all files that aren't gif, png, or jpg
+	#
+	open(IMAGES, "<", $dir);
+	my @Files = grep { $_ =! /\.|\.\./ and $_ =~ /^\w+\.(gif|png|jpg|jpeg)$/i } readdir(IMAGES);
+	close(IMAGES);
+
+	my $max = scalar(@Files) - 1;
+	if($max == 1)
+	{
+		$file =  $Files[0];
+	}
+	elsif($max > 1)
+	{
+		# randomly choose an image from the given directory
+		# call checkCache to ensure that the image hasn't been
+		# recently used...
+		#
+		my $count = 0;
+		do
+		{
+			# generate a random number between 0 and max...
+			#
+			my $rand = rand $max;
+			$file = "$dir/" . $Files[$rand];
+		}
+		while( checkCache("$dir/$file", $max, $Cache) || ($count++ < $max) );
+	}
+
+	return $file;
+}
+
 sub updateDesktop
 {
-	my ($dir, $file) = @_;
-
-	# use image if given
-	#
-	my $path = $dir;
-	if(defined($file))
-	{
-		$path += "/" . $file;
-	}
-	
-	# open directory and randomly choose a new image
-	#
-	else
-	{
-
-	}
+	my ($file) = @_;
 
 	# call xfdesktop and update image
 	#
-	system("ln -sf $path $ENV['HOME'}/.xfce4/.desktopImage");
+	system("ln -sf $file $ENV{HOME}/.xfce4/.desktopImage");
 	system("xfdesktop");
+}
+
+sub checkCache
+{
+	my ($file, $depth, $Cache) = @_;
+
+	for(my $i = 0; $i < scalar @{$Cache} && $i < $depth; $i++)
+	{
+		return 0 if $$Cache[$i] eq $file;
+	}
+
+	return 0;
+}
+
+sub updateCache
+{
+	my ($file, $max, $Cache) = @_;
+	
+	my $size = scalar @{$Cache};
+	if($size > $max)
+	{
+		# shorten cache to equal maximum allowed size
+		#
+		splice(@{$Cache}, 0, ($size - $max) + 1);
+	}
+	elsif(scalar @{$Cache} == $size)
+	{
+		# remove the 1st list element
+		#
+		shift(@{$Cache});
+	}
+
+	# push new file onto cache list
+	#
+	push @{$Cache}, $file;
 }
