@@ -6,15 +6,15 @@ use POSIX;
 
 # daemon variables
 #
-#my ($delay, $file, $dir, $log, $max_log_count) = ("", "", "", 1, 50);
 my %Vars = (
+	"delay" => "3600",
 	"time" => "",
 	"file" => "",
 	"directory" => "",
 	"log" => 1,
 	"size" => 50,
 	"cache" => [],
-	"version" => "0.1.0",
+	"version" => "0.1.1",
 );
 my $path = $ENV{'HOME'} . "/.xfce4/.xfcedd=";
 
@@ -79,7 +79,6 @@ else
 	#
 	my $keep_running = 1;
 	sub signal_handler { $keep_running = 0; }
-	
 #	sub alarm_handler
 #	{
 #		print "time to change picture!\n";
@@ -89,8 +88,6 @@ else
 	#
 	$SIG{INT} = $SIG{TERM} = $SIG{HUP} = \&signal_handler;
 #	$SIG{ALRM} = \&alarm_handler;
-
-#	alarm(10);
 
 	# verify user didn't enter non-existent command
 	# line option(s).
@@ -102,11 +99,6 @@ else
 	#
 	updateRunTimeVariables($message, \%Vars);
 
-			print "time: " . $Vars{"time"} . "\n" .
-					"file: " . $Vars{"file"} . "\n" .
-					"dir: " .  $Vars{"directory"} . "\n" .
-					"log: " . $Vars{"log"} . "\n" .
-					"max_log_count: " . $Vars{"size"} . "\n";
 #	# need to fork off child process that is
 #	# not associated with the process that started the parent
 #	#
@@ -119,6 +111,12 @@ else
 #	#
 #	POSIX::setsid() or die "Can't start a new session: $!";
 	
+	# Assign a more appropriate name to running process
+	# this is useful in that the running process will appear 
+	# as 'xfcedd' rather than '/usr/bin/perl xfcedd'
+	#
+	$0 = "xfcedd " . join " ", @ARGV;
+
 	# acquire socket
 	#
 	my $server = new IO::Socket::INET(
@@ -139,17 +137,11 @@ else
 	#
 	while( $keep_running && (my $client = $server->accept()) )
 	{
-		# $client is the new connection...
-		#
-		#my $socket_address = $client->sockname();
-		#my ($port, $myaddr)   = sockaddr_in($socket_address);
-
 		# get request from client
 		#
 		my $cmd = <$client>;
-	
-		print "Client request: $cmd";
 		$cmd =~ s/\n//;
+
 		if($cmd eq "k")
 		{
 			$keep_running = 0;
@@ -159,19 +151,6 @@ else
 		{
 			my $result = updateRunTimeVariables($cmd, \%Vars);
 			print $client $result;
-			
-			print "time: " . $Vars{"time"} . "\n" .
-					"file: " . $Vars{"file"} . "\n" .
-					"dir: " .  $Vars{"directory"} . "\n" .
-					"log: " . $Vars{"log"} . "\n" .
-					"max_log_count: " . $Vars{"size"} . "\n" .
-					"cache: \n";
-
-			foreach my $image ( @{$Vars{"cache"}} )
-			{
-				print $image . "\n";
-			}
-
 		}
 		
 		# close client connection
@@ -187,6 +166,8 @@ else
 	#
 	close($server);
 }
+
+sub 
 
 sub checkCommandLineOptions
 {
@@ -267,7 +248,7 @@ sub updateRunTimeVariables
 		if($flag eq "t")
 		{ 
 			$data >= 0 
-				and $$Vars{"time"} = $data 
+				and $$Vars{"delay"} = $data 
 				and $update = 1;
 		}
 
@@ -334,13 +315,16 @@ sub displayOptions
 			"-----------------------------------------------------------------------------\n" .
 			"xfcedd " . $Vars{"version"} . " by Kier Elliott.\n" .
 			"This software comes with ABSOLUTELY NO WARRANTY.\n" .
-			"Usage:  xfcedd [-k | -v | -t <time_delay> -f <file_name> -d <image_directory>\n" . 
+			"Usage:  xfcedd [-k | -v | -t <time_delay> -d <image_directory> -f <file_name>\n" .
+			"                          -l <boolean> -s <log_size> ]\n" . 
 			"        (Put filenames or directories in single quotes (') )\n" .
 			"        -k   Kill running daemon\n" .
 			"        -v   Print our version information\n" .
 			"        -t   Set time delay daemon waites before choosing new image\n" .
 			"        -f   Set current/startup image.\n" .
 			"        -d   Set current/startup image directory.\n" .
+			"        -l   Turn logging on (1) or off (0).\n" .
+			"        -s   Set size of log, must be between 0 and 100.\n" .
 			"\n";
 }
 
@@ -350,7 +334,16 @@ sub updateDesktop
 
 	# get new image
 	#
-	my $file = _chooseImage($$Vars{"directory"}, $$Vars{"file"}, $$Vars{"cache"});
+	my $file;
+	if($$Vars{"file"})
+	{
+		$file = $$Vars{"file"};
+		$$Vars{"file"} = "";
+	}
+	else
+	{
+		$file = _chooseRandomImage($$Vars{"directory"}, $$Vars{"cache"});		
+	}
 
 	# update desktop using new image...
 	#
@@ -362,20 +355,33 @@ sub updateDesktop
 
 	# reset time delay counter...
 	#
+	_resetTimer(\$$Vars{"delay"}, \$$Vars{"time"});
+
+	return undef;
 }
 
-sub _chooseImage
+sub checkTimer
 {
-	my ($dir, $file, $Cache) = @_;
+	my ($delay, $time) = @_;
+
+	_resetTimer($delay, $time) unless ($time > time());
+
+	return 1;
+}
+
+sub _chooseRandomImage
+{
+	my ($dir, $Cache) = @_;
+	my $file;
 	
 	# get a directory listing of all images in given directory
 	# remove '.', '..', and all files that aren't gif, png, or jpg
 	#
-	open(IMAGES, "<", $dir);
-	my @Files = grep { $_ =! /\.|\.\./ and $_ =~ /^\w+\.(gif|png|jpg|jpeg)$/i } readdir(IMAGES);
-	close(IMAGES);
+	opendir(IMAGES, $dir);
+	my @Files = grep { $_ =~ /\.(gif|png|jpg|jpeg)$/i } readdir(IMAGES);
+	closedir(IMAGES);
 
-	my $max = scalar(@Files) - 1;
+	my $max = scalar(@Files);
 	if($max == 1)
 	{
 		$file =  $Files[0];
@@ -391,10 +397,10 @@ sub _chooseImage
 		{
 			# generate a random number between 0 and max...
 			#
-			my $rand = rand $max;
+			my $rand = rand ($max - 1);
 			$file = "$dir/" . $Files[$rand];
 		}
-		while( _checkCache("$dir/$file", $max, $Cache) || ($count++ < $max) );
+		while( _checkCache("$dir/$file", $max, $Cache) && ($count++ < $max) );
 	}
 
 	return $file;
@@ -408,6 +414,8 @@ sub _refreshDesktop
 	#
 	system("ln -sf \'$file\' $ENV{HOME}/.xfce4/.desktopImage");
 	system("xfdesktop");
+
+	return undef;
 }
 
 sub _checkCache
@@ -416,29 +424,24 @@ sub _checkCache
 
 	for(my $i = 0; $i < scalar @{$Cache} && $i < $depth; $i++)
 	{
-		return 0 if $$Cache[$i] eq $file;
+		return 1 if $$Cache[$i] eq $file;
 	}
 
-	return 1;
+	return 0;
 }
 
 sub _updateCache
 {
 	my ($file, $log, $max, $Cache) = @_;
-	
-foreach my $image ( @{$Cache} )
-{
-	print $image ."\n";
-}
-	
 	my $size = scalar @{$Cache};
+	
 	if($size > $max)
 	{
 		# shorten cache to equal maximum allowed size
 		#
 		splice(@{$Cache}, 0, ($size - $max) + 1);
 	}
-	elsif(scalar @{$Cache} == $size)
+	elsif(scalar $size == $max)
 	{
 		# remove the 1st list element
 		#
@@ -449,9 +452,14 @@ foreach my $image ( @{$Cache} )
 	#
 	push @{$Cache}, $file;
 
-foreach my $image ( @{$Cache} )
-{
-	print $image ."\n";
+	return undef;
 }
-	
+
+sub _resetTimer
+{
+	my ($delay, $time) = @_;
+
+	$time = time() + $delay;
+
+	return undef;
 }
