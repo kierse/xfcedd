@@ -1,0 +1,9 @@
+Requirements:
+-------------
+
+C libraries:
+libevent   - http://www.monkey.org/~provos/libevent/
+
+Perl Modules:
+Event::Lib - http://search.cpan.org/~vparseval/Event-Lib-0.04/lib/Event/Lib.pm
+

@@ -1,22 +1,24 @@
 #!/usr/bin/perl -w
 
 use strict;
-use IO::Socket::INET;
 use POSIX;
+use IO::Socket::INET;
 
 # daemon variables
 #
 my %Vars = (
 	"delay" => "3600",
-	"time" => "",
 	"file" => "",
 	"directory" => "",
 	"log" => 1,
 	"size" => 50,
 	"cache" => [],
-	"version" => "0.1.1",
+	"version" => "0.2.0",
 );
+
+my $version = "0.2.0";
 my $path = $ENV{'HOME'} . "/.xfce4/.xfcedd=";
+my $log_file = $ENV{'HOME'} . "/.xfce4/xfcedd.log";
 
 # if server is already running and user sent no arguments, exit
 #
@@ -75,20 +77,9 @@ elsif( -e $path && (scalar @ARGV > 0) )
 #
 else
 {
-	# trap fatal signals and set flag indicating we need to exit gracefully
-	#
-	my $keep_running = 1;
-	sub signal_handler { $keep_running = 0; }
-#	sub alarm_handler
-#	{
-#		print "time to change picture!\n";
-#	}
+	require Event::Lib;
+	Event::Lib->import();
 	
-	# trap or ignore $SIG{PIPE}
-	#
-	$SIG{INT} = $SIG{TERM} = $SIG{HUP} = \&signal_handler;
-#	$SIG{ALRM} = \&alarm_handler;
-
 	# verify user didn't enter non-existent command
 	# line option(s).
 	#
@@ -99,18 +90,22 @@ else
 	#
 	updateRunTimeVariables($message, \%Vars);
 
-#	# need to fork off child process that is
-#	# not associated with the process that started the parent
-#	#
-#	my $pid = fork;
-#	exit if $pid;
-#	die "Couldn't fork: $!" unless defined($pid);
-#	
-#	# Dissociate from the controlling terminal that started parent
-#	# and stop being part of whatever process group we had been a member of.
-#	#
-#	POSIX::setsid() or die "Can't start a new session: $!";
+	# need to fork off child process that is
+	# not associated with the process that started the parent
+	#
+	my $pid = fork;
+	exit if $pid;
+	die "Couldn't fork: $!" unless defined($pid);
 	
+	# Dissociate from the controlling terminal that started parent
+	# and stop being part of whatever process group we had been a member of.
+	#
+	POSIX::setsid() or die "Can't start a new session: $!";
+	
+	# must register events with Event::Lib
+	#
+	event_init();
+
 	# Assign a more appropriate name to running process
 	# this is useful in that the running process will appear 
 	# as 'xfcedd' rather than '/usr/bin/perl xfcedd'
@@ -133,31 +128,25 @@ else
 	print PORT $socketPort;
 	close(PORT);
 	
-	# loop and wait for a client connection
+	# create event watchers...
 	#
-	while( $keep_running && (my $client = $server->accept()) )
-	{
-		# get request from client
-		#
-		my $cmd = <$client>;
-		$cmd =~ s/\n//;
+	my %Events;
+	%Events = (
+		"main"  => event_new($server, Event::Lib->EV_READ(), \&clientHandler, \%Events, \%Vars),
+   	"timer" => timer_new(sub { timerHandler(\%Events, \%Vars); }),
+   	"int"   => signal_new(SIGINT, sub { terminateEventWatchers(\%Events); }),
+   	"term"  => signal_new(SIGTERM, sub { terminateEventWatchers(\%Events); }),
+   	"hup"   => signal_new(SIGHUP, sub { terminateEventWatchers(\%Events); }),
+	);
+   
+	# ...and add them to the event loop
+	#
+   $_->add for values %Events;
 
-		if($cmd eq "k")
-		{
-			$keep_running = 0;
-			print $client "1\n";
-		}
-		else
-		{
-			my $result = updateRunTimeVariables($cmd, \%Vars);
-			print $client $result;
-		}
-		
-		# close client connection
-		#
-		close($client);
-	}
-	
+	# start event loop!
+	#
+   $Events{"main"}->dispatch;	
+
 	# delete the file pointing to the port
 	#
 	unlink($path);
@@ -165,6 +154,67 @@ else
 	# close the open socket
 	#
 	close($server);
+}
+
+sub clientHandler
+{
+	my ($e, $type, $Events, $Vars) = @_;
+	my $socket = $e->fh();
+	my $client = $socket->accept();
+
+	# get request from client
+	#
+	my $cmd = <$client>;
+	$cmd =~ s/\n//;
+
+	if($cmd eq "k")
+	{
+		print $client "1\n";
+		terminateEventWatchers($Events);
+	}
+	else
+	{
+		my $result = updateRunTimeVariables($cmd, $Vars);
+		print $client $result;
+
+		timerHandler($Events, $Vars);
+	}
+	
+	# close client connection
+	#
+	close($client);
+}
+
+sub timerHandler
+{
+	my ($Events, $Vars) = @_;
+
+	$$Events{"timer"}->del();
+	if($$Vars{"delay"} > 0)
+	{
+		$$Events{"timer"}->add($$Vars{"delay"});
+	}
+
+	# update display!
+	#
+	updateDesktop($Events, $Vars);
+
+	print "[\n";
+	foreach my $image (@{$$Vars{"cache"}})
+	{
+		print $image . "\n";
+	}
+	print "]\n\n";
+}
+
+sub terminateEventWatchers
+{
+	my ($Events) = @_;
+
+	foreach my $event (values %{$Events})
+	{
+		$event->del();
+	}
 }
 
 sub checkCommandLineOptions
@@ -227,7 +277,6 @@ sub checkCommandLineOptions
 sub updateRunTimeVariables
 {
 	my ($cmd, $Vars) = @_;
-	my $update = 0;
 
 	# if given cmd is empty, return
 	#
@@ -245,9 +294,7 @@ sub updateRunTimeVariables
 		# update delay value
 		if($flag eq "t")
 		{ 
-			$data >= 0 
-				and $$Vars{"delay"} = $data 
-				and $update = 1;
+			$data >= 0 and $$Vars{"delay"} = $data;
 		}
 
 		# update file value
@@ -256,12 +303,10 @@ sub updateRunTimeVariables
 			if(-e $data)
 			{
 				$$Vars{"file"} = $data;
-				$update = 1;
 			}
 			elsif(-e $$Vars{"directory"} . "/" . $data)
 			{
 				$$Vars{"file"} = $$Vars{"directory"} . "/" . $data;
-				$update = 1;
 			}
 		}
 
@@ -290,14 +335,6 @@ sub updateRunTimeVariables
 		}
 	}
 
-	# if update flag is set, try and 
-	# update desktop image
-	#
-	if($update)
-	{
-		updateDesktop($Vars);
-	}
-
 	return "1\n";
 }
 
@@ -311,24 +348,24 @@ sub displayOptions
 	# 
 	print $error .
 			"-----------------------------------------------------------------------------\n" .
-			"xfcedd " . $Vars{"version"} . " by Kier Elliott.\n" .
+			"xfcedd " . $version . " by Kier Elliott.\n" .
 			"This software comes with ABSOLUTELY NO WARRANTY.\n" .
 			"Usage:  xfcedd [-k | -v | -t <time_delay> -d <image_directory> -f <file_name>\n" .
 			"                          -l <boolean> -s <log_size> ]\n" . 
-			"        (Put filenames or directories in single quotes (') )\n" .
-			"        -k   Kill running daemon\n" .
-			"        -v   Print our version information\n" .
-			"        -t   Set time delay daemon waites before choosing new image\n" .
-			"        -f   Set current/startup image.\n" .
-			"        -d   Set current/startup image directory.\n" .
-			"        -l   Turn logging on (1) or off (0).\n" .
-			"        -s   Set size of log, must be between 0 and 100.\n" .
+			"   (Put filenames or directories in single quotes (') )\n" .
+			"   -k   Kill running daemon\n" .
+			"   -v   Print our version information\n" .
+			"   -t   Set time delay (in seconds) daemon waits before choosing new image\n" .
+			"   -f   Set current/startup image.\n" .
+			"   -d   Set current/startup image directory.\n" .
+			"   -l   Turn logging on (1) or off (0).\n" .
+			"   -s   Set size of log, must be between 0 and 100.\n" .
 			"\n";
 }
 
 sub updateDesktop
 {
-	my ($Vars) = @_;
+	my ($Events, $Vars) = @_;
 
 	# get new image
 	#
@@ -351,20 +388,7 @@ sub updateDesktop
 	#
 	_updateCache($file, $$Vars{"log"}, $$Vars{"size"}, $$Vars{"cache"});
 
-	# reset time delay counter...
-	#
-	_resetTimer(\$$Vars{"delay"}, \$$Vars{"time"});
-
 	return undef;
-}
-
-sub checkTimer
-{
-	my ($delay, $time) = @_;
-
-	_resetTimer($delay, $time) unless ($time > time());
-
-	return 1;
 }
 
 sub _chooseRandomImage
@@ -382,7 +406,7 @@ sub _chooseRandomImage
 	my $max = scalar(@Files);
 	if($max == 1)
 	{
-		$file =  $Files[0];
+		$file =  "$dir/" . $Files[0];
 	}
 	elsif($max > 1)
 	{
@@ -390,17 +414,25 @@ sub _chooseRandomImage
 		# call checkCache to ensure that the image hasn't been
 		# recently used...
 		#
-		my $count = 0;
-		do
+		if($max == scalar @{$Cache})
 		{
-			# generate a random number between 0 and max...
-			#
-			my $rand = rand ($max - 1);
-			$file = "$dir/" . $Files[$rand];
+			$file = $$Cache[0];
+			@{$Cache} = splice(@{$Cache}, sprintf("%.0f", scalar(@{$Cache})/2));
 		}
-		while( _checkCache("$dir/$file", $max, $Cache) && ($count++ < $max) );
+		else
+		{
+			do
+			{
+				# generate a random number between 0 and max...
+				#
+				my $rand = rand ($max - 1);
+				$rand = sprintf("%.0f", $rand); # round to nearest integer
+				$file = "$dir/" . $Files[$rand];
+			}
+			while(_checkCache($file, $Cache));
+		}
 	}
-
+	
 	return $file;
 }
 
@@ -418,9 +450,9 @@ sub _refreshDesktop
 
 sub _checkCache
 {
-	my ($file, $depth, $Cache) = @_;
+	my ($file, $Cache) = @_;
 
-	for(my $i = 0; $i < scalar @{$Cache} && $i < $depth; $i++)
+	for(my $i = 0; $i < scalar @{$Cache}; $i++)
 	{
 		return 1 if $$Cache[$i] eq $file;
 	}
@@ -453,11 +485,3 @@ sub _updateCache
 	return undef;
 }
 
-sub _resetTimer
-{
-	my ($delay, $time) = @_;
-
-	$time = time() + $delay;
-
-	return undef;
-}
