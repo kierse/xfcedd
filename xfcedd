@@ -264,35 +264,35 @@ sub checkCommandLineOptions
 		{
 			$flag = "t";
 			$data = $Args[++$i];
-			return (0, "Error: Illegal value $data - must be a number\n") unless $data =~ /^\d+$/;
+			return (0, "Error: Illegal value \'$data\' - must be a number\n") unless $data =~ /^\d+$/;
 		}
 		elsif($Args[$i] eq "-f")
 		{
 			$flag = "f";
 			$data = $Args[++$i];
-			return (0, "Error: Illegal value $data - must be a valid image\n") unless $data =~ /(gif|png|jpg|jpeg)$/i;
+			return (0, "Error: Illegal value \'$data\' - must be a valid image\n") unless $data =~ /(gif|png|jpg|jpeg)$/i;
 		}
 		elsif($Args[$i] eq "-d")
 		{
 			$flag = "d";
 			$data = $Args[++$i];
-			return (0, "Error: Illegal value $data - must be a valid directory\n") unless -d $data;
+			return (0, "Error: Illegal value \'$data\' - must be a valid directory\n") unless -d $data;
 		}
 		elsif($Args[$i] eq "-l")
 		{
 			$flag = "l";
 			$data = $Args[++$i];
-			return (0, "Error: Illegal value $data - must be a 0 or 1\n") unless( ($data == 0) || ($data == 1) );
+			return (0, "Error: Illegal value \'$data\' - must be a 0 or 1\n") unless( ($data == 0) || ($data == 1) );
 		}
 		elsif($Args[$i] eq "-s")
 		{
 			$flag = "s";
 			$data = $Args[++$i];
-			return (0, "Error: Illegal value $data - must be a number between 0 and 100\n") unless $data >= 0;
+			return (0, "Error: Illegal value \'$data\' - must be a number between 0 and 100\n") unless $data >= 0;
 		}
 		else
 		{
-			return (0, "Error: Illegal value " . $Args[$i] . "\n");
+			return (0, "Error: Illegal value \'" . $Args[$i] . "\'\n");
 		}
 			
 		push @Query, "$flag:$data";
@@ -421,7 +421,9 @@ sub updateDesktop
 
 	# cache image selection
 	#
-	_updateCache($file, $$Vars{"log"}, $$Vars{"size"}, $$Vars{"cache"});
+	_updateCache($file, $$Vars{"size"}, $$Vars{"cache"});
+
+	_writeToLog("Selected new desktop image: $file\n", $log_file, $$Vars{"size"}) if $$Vars{"log"};
 
 	return undef;
 }
@@ -497,7 +499,7 @@ sub _checkCache
 
 sub _updateCache
 {
-	my ($file, $log, $max, $Cache) = @_;
+	my ($file, $max, $Cache) = @_;
 	my $size = scalar @{$Cache};
 	
 	if($size > $max)
@@ -520,3 +522,37 @@ sub _updateCache
 	return undef;
 }
 
+sub _writeToLog
+{
+	my ($message, $file, $maxSize) = @_;
+	my ($sec, $min, $hour, $mday, $mon, $year, $wday, $yday, $isdst) = localtime();
+	$message = "(" . sprintf("%.1d", $mday) . "/" . sprintf("%.2d", ++$mon) . "/" . (1900 + $year) . " $hour:$min) - $message";
+	
+	my @Log;
+	if(-e $file)
+	{
+		open(LOGFILE, "<", $file);
+		@Log = <LOGFILE>;
+		close(LOGFILE);
+	}
+
+	# if size of log is greater than maxSize, trim
+	# file to max
+	#
+	if($maxSize <= scalar @Log)
+	{
+		# push new message onto list of current...
+		#
+		push @Log, $message;
+	
+		open(LOGFILE, ">", $file);
+		print LOGFILE $_ for splice(@Log, (scalar @Log - $maxSize));
+		close(LOGFILE);
+	}
+	else
+	{
+		open(LOGFILE, ">>", $file);
+		print LOGFILE $message;
+		close(LOGFILE);
+	}
+}
