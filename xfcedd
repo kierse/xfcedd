@@ -8,13 +8,14 @@ use POSIX;
 #
 #my ($delay, $file, $dir, $log, $max_log_count) = ("", "", "", 1, 50);
 my %Vars = (
-	"t" => "",
-	"f" => "",
-	"d" => "",
-	"l" => 1,
-	"c" => 50,
+	"time" => "",
+	"file" => "",
+	"directory" => "",
+	"log" => 1,
+	"size" => 50,
+	"cache" => [],
+	"version" => "0.1.0",
 );
-my $version = "0.1.0";
 my $path = $ENV{'HOME'} . "/.xfce4/.xfcedd=";
 
 # if server is already running and user sent no arguments, exit
@@ -36,13 +37,8 @@ elsif( -e $path && (scalar @ARGV > 0) )
 		# verify user didn't enter non-existent command
 		# line option(s).
 		#
-		checkCommandLineOptions(@ARGV)
-			or exit displayOptions();
-
-		# using argument flags, build string to query
-		# server with
-		#
-		my $cmd = buildQuery(@ARGV);
+		my ($code, $message) = checkCommandLineOptions(@ARGV);
+		exit displayOptions($message) unless $code;
 
 		# get port of running server
 		#
@@ -62,12 +58,12 @@ elsif( -e $path && (scalar @ARGV > 0) )
 	
 		# send request to server
 		#
-		print $socket $cmd;
+		print $socket $message;
 		
 		# read response and print to console
 		#
-		my $response = <$socket>;
-		print $response;
+		($code, $message) = split ":", <$socket>;
+		print displayOptions($message) unless $code;
 	
 		# close socket
 		#
@@ -99,13 +95,19 @@ else
 	# verify user didn't enter non-existent command
 	# line option(s).
 	#
-	checkCommandLineOptions(@ARGV)
-		or exit displayOptions();
+	my ($code, $message) = checkCommandLineOptions(@ARGV);
+	exit displayOptions($message) unless $code;
 
 	# update variables with command line options
 	#
-	updateRunTimeVariables(\%Vars, \@ARGV);
+	updateRunTimeVariables($message, \%Vars);
 
+
+			print "time: " . $Vars{"time"} . "\n" .
+					"file: " . $Vars{"file"} . "\n" .
+					"dir: " .  $Vars{"directory"} . "\n" .
+					"log: " . $Vars{"log"} . "\n" .
+					"max_log_count: " . $Vars{"size"} . "\n";
 #	# need to fork off child process that is
 #	# not associated with the process that started the parent
 #	#
@@ -148,21 +150,22 @@ else
 		my $cmd = <$client>;
 	
 		print "Client request: $cmd";
-		if($cmd =~ /^-k$/i)
+		$cmd =~ s/\n//;
+		if($cmd eq "k")
 		{
 			$keep_running = 0;
 			print $client "1\n";
 		}
 		else
 		{
-			my $result = updateRunTimeVariables(\%Vars, split(" ", $cmd));
+			my $result = updateRunTimeVariables($cmd, \%Vars);
 			print $client $result;
-
-#			print "time: $delay\n" .
-#					"file: $file\n" .
-#					"dir: $dir\n" .
-#					"log: $log\n" .
-#					"max_log_count: $max_log_count\n";
+			
+			print "time: " . $Vars{"time"} . "\n" .
+					"file: " . $Vars{"file"} . "\n" .
+					"dir: " .  $Vars{"directory"} . "\n" .
+					"log: " . $Vars{"log"} . "\n" .
+					"max_log_count: " . $Vars{"size"} . "\n";
 		}
 		
 		# close client connection
@@ -182,71 +185,71 @@ else
 sub checkCommandLineOptions
 {
 	my (@Args) = @_;
+	my @Query;
 
 	for(my $i = 0; $i < scalar @Args; $i++)
 	{
-		if($Args[$i] eq "-k") { }
-		elsif($Args[$i] eq "-v") { }
-		elsif($Args[$i] eq "-t")
-		{
-			return 0 unless $Args[++$i] =~ /^\d+$/;
-		}
-		elsif($Args[$i] eq "-f")
-		{
-			return 0 unless $Args[++$i] =~ /^\w+\.(gif|png|jpg|jpeg)$/i;
-		}
-		elsif($Args[$i] eq "-d")
-		{
-			return 0 if $Args[++$i] =~ /^-+(\w+)?$/i;
-		}
-		else
-		{
-			return 0;
-		}
-	}
-
-	return 1;
-}
-
-sub buildQuery
-{
-	my (@Args) = @_;
-	my $query;
-
-	for(my $i = 0; $i < scalar @Args; $i++)
-	{
+		my ($flag, $data) = ("", "");
 		if($Args[$i] eq "-k")
 		{ 
-			return "-k\n";
+			return (1, "k\n");
 		}
 		elsif($Args[$i] eq "-v")
-		{
+		{ 
 			# this is empty on purpose #
 		}
 		elsif($Args[$i] eq "-t")
 		{
-			$query .= "-t " . $Args[++$i];
+			$flag = "t";
+			$data = $Args[++$i];
+			return (0, "Error: Illegal value $data - must be a number\n") unless $data =~ /^\d+$/;
 		}
 		elsif($Args[$i] eq "-f")
 		{
-			$query .= "-f " . $Args[++$i];
+			$flag = "f";
+			$data = $Args[++$i];
+			return (0, "Error: Illegal value $data - must be a valid image\n") unless $data =~ /^\w+\.(gif|png|jpg|jpeg)$/i;
 		}
 		elsif($Args[$i] eq "-d")
 		{
-			$query .= "-d " . $Args[++$i];
+			$flag = "d";
+			$data = $Args[++$i];
+			return (0, "Error: Illegal value $data - must be a valid directory\n") unless -d $data;
 		}
+		elsif($Args[$i] eq "-l")
+		{
+			$flag = "l";
+			$data = $Args[++$i];
+			return (0, "Error: Illegal value $data - must be a 0 or 1\n") unless( ($data == 0) || ($data == 1) );
+		}
+		elsif($Args[$i] eq "-s")
+		{
+			$flag = "s";
+			$data = $Args[++$i];
+			return (0, "Error: Illegal value $data - must be a number between 0 and 100\n") unless $data >= 0;
+		}
+		else
+		{
+			return (0, "Error: Illegal value " . $Args[$i] . "\n");
+		}
+			
+		push @Query, "$flag:$data";
 	}
-	
-	return "$query\n";
+
+	return (1, join(",", @Query) . "\n");
 }
 
 sub displayOptions
 {
+	my ($error) = @_;
+	$error ||= "";
+	
 	# print out command line options in friendly,
 	# human readable format
 	# 
-	print "-----------------------------------------------------------------------------\n" .
-			"xfcedd $version by Kier Elliott.\n" .
+	print $error .
+			"-----------------------------------------------------------------------------\n" .
+			"xfcedd " . $Vars{"version"} . " by Kier Elliott.\n" .
 			"This software comes with ABSOLUTELY NO WARRANTY.\n" .
 			"Usage:  xfcedd [-k | -v | -t <time_delay> -f <file_name> -d <image_directory>\n" . 
 			"        (Put filenames or directories in single quotes (') )\n" .
@@ -260,60 +263,53 @@ sub displayOptions
 
 sub updateRunTimeVariables
 {
-	my ($delay, $file, $dir, $log, $max_log_count, @Args) = @_;
+	my ($cmd, $Vars) = @_;
 
 	# parse through given array and update given values
 	#
-	for(my $i = 0; $i < scalar @Args; $i++)
+	#for(my $i = 0; $i < scalar @{$Args}; $i++)
+	foreach my $pair (split ",", $cmd)
 	{
+		# split up pair into flag and data
+		#
+		my ($flag, $data) = split ":", $pair;
+
+		$data =~ s/\n//;
+	
 		# update delay value
-		if($Args[$i] =~ /-t|--time/i)
+		if($flag eq "t")
 		{ 
-			my $data = $Args[$i+1];
-			$data >= 0
-				and $$delay = $data
-				and $i++;
+			$data >= 0 and $$Vars{"time"} = $data;
 		}
 
 		# update file value
-		elsif($Args[$i] =~ /-f|--file/i)
+		elsif($flag eq "f")
 		{
-			my $data = $Args[$i+1];
-			$data =~ /^\w+\.(gif|png|jpg)$/i
-				and $$file = $data
-				and $i++;
+			$data =~ /^\w+\.(gif|png|jpg|jpeg)$/i and $$Vars{"file"} = $data;
 		}
 
 		# update directory value
-		elsif($Args[$i] =~ /-d|--dir/i)
+		elsif($flag eq "d")
 		{
-			my $data = $Args[$i+1];
-			$$dir = $data
-				and $i++;
+			(-d "$data") and $$Vars{"directory"} = $data;
 		}
 
 		# update log value
-		elsif($Args[$i] =~ /^--log$/i)
+		elsif($flag eq "l")
 		{
-			my $data = $Args[$i+1];
-			($data == 0 || $data == 1)
-				and $$log = $data
-				and $i++;
+			($data == 0 || $data == 1) and $$Vars{"log"} = $data;
 		}
 
 		# update max log count value
-		elsif($Args[$i] =~ /^--max_log_count$/i)
+		elsif($flag eq "s")
 		{
-			my $data = $Args[$i+1];
-			($data >= 0 && $data <= 100)
-				and $$max_log_count = $data
-				and $i++;
+			($data >= 0 && $data <= 100) and $$Vars{"size"} = $data;
 		}
 
 		# oops, unknown command line parameter
 		else 
 		{ 
-			return "Error - Unknown parameter: $Args[$i]\n"; 
+			return "0:Unknown parameter -$flag.\n"; 
 		}
 	}
 
