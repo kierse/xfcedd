@@ -29,6 +29,8 @@ hard coding it
   by the server.
 - make sure xfdesktop is running before setting a new image and calling
   it.
+- new command line parameter that returns location of currently displayed
+image
 
 NEW
 ---
