@@ -47,3 +47,4 @@ NEW
   actually exist but it can be read from.  When something tries to 
   read from it, the process holding the file (in this case xfcedd) would
   return the current data.
+
