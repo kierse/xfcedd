@@ -1,0 +1,3 @@
+#!/bin/sh
+
+xfcedd -d '/mnt/fat/My Documents/My Pictures/desktops' -t 900
