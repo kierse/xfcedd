@@ -25,48 +25,105 @@
 #-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 
 use strict;
+
 use POSIX;
 use IO::Socket::INET;
+use Data::Dumper;
+
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# Main																				  #
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
 
 # daemon variables
 #
-my %Vars = (
+my %Vars = 
+(
 	"delay" => "3600",
 	"file" => "",
 	"directory" => "",
 	"log" => 1,
 	"size" => 50,
 	"cache" => [],
+	"extensions" => "gif|png|jpg|jpeg",
 );
 
-my $version = "0.2.1";
+my $version = "0.4.0";
 my $path = $ENV{'HOME'} . "/.config/xfce4/xfcedd/.xfcedd=";
 my $log_file = $ENV{'HOME'} . "/.config/xfce4/xfcedd/xfcedd.log";
+my $config_file = $ENV{'HOME'} . "/.config/xfce4/xfcedd/xfcedd.conf";
 
 # check if user is requesting help or versioning information
 #
-if($ARGV[0] =~ /(^-v$)|(^-h$)/i)
+if( scalar @ARGV == 0 or $ARGV[0] =~ /(^-v$)|(^-h$)/i )
 {
 	displayOptions();
 }
 
-# if server is not running and user sent kill flag, throw error
-#
-elsif( !(-e $path) && $ARGV[0] eq "-k") { displayOptions("Error: Server is not running.\n"); }
-
-# if server is already running and user sent no arguments, exit
-#
-elsif( -e $path && (scalar @ARGV == 0) ) { exit; }
-
-# if server is running and user is attempting to query server
-#
-elsif( -e $path && (scalar @ARGV > 0) )
+else
 {
 	# verify user didn't enter non-existent command
 	# line option(s).
 	#
 	my ($code, $message) = checkCommandLineOptions(@ARGV);
-	exit displayOptions($message) unless $code;
+	displayOptions($message) and exit 
+		unless $code;
+
+	# attempt to establish connection with server
+	if( my $socket = contactDaemon($path) )
+	{
+		# send request to server
+		print $socket "$message\n";
+		
+		# read response and print to console
+		my $Message = eval( <$socket> );
+		my $Response = $Message->[1];
+
+		# if result is good and a message was returned, display it
+		print $Response->{Message} . "\n"
+			if $Response->{Result} and $Response->{Message};
+
+		# if result was bad display prompt options and given message
+		print displayOptions($Response->{Message}) 
+			unless $Response->{Result};
+
+		# close socket
+		close $socket;
+	}
+
+	# server isn't running, rectify that
+	else
+	{
+		# if kill command was given and the daemon isn't
+		# running, there is no point in starting it.  Therefore
+		# only start daemon if return code was 1
+		if( $code eq "1" )
+		{
+			# load config file
+			readConfigFile($config_file);
+
+			my $Commands = eval( $message );
+			updateRunTimeVariables(@$Commands);
+
+			startDaemon($path);
+		}
+		else
+		{
+			print "server not running\n";
+		}
+	}
+}
+
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+# Methods																			  #
+#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#
+
+sub contactDaemon
+{
+	my ($path) = @_;
+
+	# check if port descriptor exists at given path
+	# if not, set daemon flag to 0
+	return unless -e $path;
 
 	# get port of running server
 	#
@@ -76,45 +133,33 @@ elsif( -e $path && (scalar @ARGV > 0) )
 
 	# open a socket to running server
 	#
-	my $socket = new IO::Socket::INET
-	(
-		PeerAddr => "Localhost",
-		PeerPort => $port,
-		Proto    => "tcp",
-		Type     => SOCK_STREAM,
-	) or die "Couldn't open connection to server: $!\n";
+	my $socket;
+	eval
+	{
+		$socket = new IO::Socket::INET
+		(
+			PeerAddr => "Localhost",
+			PeerPort => $port,
+			Proto    => "tcp",
+			Type     => SOCK_STREAM,
+		) or die "Couldn't open connection to server: $!\n";
+	};
 
-	# send request to server
-	#
-	print $socket $message;
-	
-	# read response and print to console
-	#
-	($code, $message) = split ":", <$socket>;
-	print displayOptions($message) unless $code;
+	print "Error: Server is not running..."
+		and return if $@;
 
-	# close socket
-	#
-	close($socket);
+	return $socket;
 }
 
-# no server running!  Start up xfcedd daemon 
-#
-else
+sub startDaemon
 {
+	my ($path) = @_;
+
+	print "starting daemon\n";
+
 	require Event::Lib;
 	Event::Lib->import();
 	
-	# verify user didn't enter non-existent command
-	# line option(s).
-	#
-	my ($code, $message) = checkCommandLineOptions(@ARGV);
-	exit displayOptions($message) unless $code;
-
-	# update variables with command line options
-	#
-	updateRunTimeVariables($message, \%Vars);
-
 	# need to fork off child process that is
 	# not associated with the process that started the parent
 	#
@@ -156,8 +201,8 @@ else
 	#
 	my %Events;
 	%Events = (
-		"main"  => event_new($server, Event::Lib->EV_READ, \&clientHandler, \%Events, \%Vars),
-   	"timer" => timer_new(sub { timerHandler(\%Events, \%Vars); }),
+		"main"  => event_new($server, Event::Lib->EV_READ, \&clientHandler, \%Events),
+   	"timer" => timer_new(sub { timerHandler(\%Events); }),
    	"int"   => signal_new(SIGINT, sub { terminateEventWatchers(\%Events); }),
    	"term"  => signal_new(SIGTERM, sub { terminateEventWatchers(\%Events); }),
    	"hup"   => signal_new(SIGHUP, sub { terminateEventWatchers(\%Events); }),
@@ -182,51 +227,88 @@ else
 
 sub clientHandler
 {
-	my ($e, $type, $Events, $Vars) = @_;
+	my ($e, $type, $Events) = @_;
 	my $socket = $e->fh();
 	my $client = $socket->accept();
 
 	# get request from client
-	#
-	my $cmd = <$client>;
-	$cmd =~ s/\n//;
+	my $message = <$client>;
+	$message =~ s/\n//;
 
-	if($cmd eq "k")
-	{
-		print $client "1\n";
-		terminateEventWatchers($Events);
-	}
-	else
-	{
-		my $result = updateRunTimeVariables($cmd, $Vars);
-		print $client $result;
+   my $kill = 0;
+	my $success = 1;
+	my $response;
 
-		timerHandler($Events, $Vars);
-	}
-	
-	# close client connection
-	#
-	close($client);
+   # if the client didn't send anything,
+   # do nothing and return 0
+   if( $message eq "" )
+   {
+		$success = 0;
+		$response = "No arguments given - nothing to do!";
+   }
+   else
+   {
+   	# there was a problem encountered while 
+   	# evaluating the client message, do nothing
+   	# and return 0
+   	my $Commands = eval( $message );
+   	if( $@ )
+   	{
+			$success = 0;
+			$response = "Problem evaluating client message";
+   	}
+   	else
+   	{
+			my $Cmd = $Commands->[1];
+   		if( $Cmd->{Command} eq "-k" )
+   		{
+				$kill = 1;
+				$response = "Server shutdown complete";
+   			terminateEventWatchers($Events);
+   		}
+   		else
+   		{
+   			($success, $response) = updateRunTimeVariables(@$Commands);
+				if( $success eq "1" )
+				{
+					timerHandler($Events);
+				}
+   		}
+   	}
+   }
 
-	# add the event listener, have to do this or
-	# listener will only work once!
-	#
-	$e->add() unless $cmd eq "k";
+	my $dumper = new Data::Dumper([["RESPONSE", {Result => $success, Message => $response}]]);
+	$dumper->Purity(1);
+	$dumper->Indent(1);
+	$dumper->Terse(1);
+
+	$message = $dumper->Dump();
+	$message =~ s/\n//g;
+
+	# respond to the client and close the connection
+	print $client "$message\n";
+
+   # close client connection
+   close $client;
+
+   # add the event listener, have to do this or
+   # listener will only work once!
+   $e->add() unless $kill;
 }
 
 sub timerHandler
 {
-	my ($Events, $Vars) = @_;
+	my ($Events) = @_;
 
 	$$Events{"timer"}->del();
-	if($$Vars{"delay"} > 0)
+	if($Vars{"delay"} > 0)
 	{
-		$$Events{"timer"}->add($$Vars{"delay"});
+		$$Events{"timer"}->add($Vars{"delay"});
 	}
 
 	# update display!
 	#
-	updateDesktop($Events, $Vars);
+	updateDesktop($Events);
 }
 
 sub terminateEventWatchers
@@ -239,135 +321,287 @@ sub terminateEventWatchers
 	}
 }
 
+# method return a code and a message
+# 
+# code can be one of 3 values:
+# 0 - an error was encountered while parsing command line arguments
+# 1 - parsing successful 
+# 2 - parsing successful - kill command received
 sub checkCommandLineOptions
 {
 	my (@Args) = @_;
-	my @Query;
+
+	my @Queue;
+	my $flag = 1;
 
 	for(my $i = 0; $i < scalar @Args; $i++)
 	{
-		my ($flag, $data) = ("", "");
+		my $command = {Command => $Args[$i]};
+		my $message = "";
+
 		if($Args[$i] eq "-k")
-		{ 
-			return (1, "k\n");
-		}
-		elsif($Args[$i] eq "-v")
-		{ 
-			# this is empty on purpose #
-		}
-		elsif($Args[$i] eq "-n")
 		{
-			return (1, "n\n");
+			$flag = 2;
+		}
+		elsif($Args[$i] eq "-i")
+		{
+			if( $Args[$i+1] && $Args[$i+1] =~ /^\d$/ )
+			{
+				if( $Args[$i+1] >= 0 )
+				{
+					$command->{Value} = $Args[++$i];
+				}
+				else
+				{
+					$message = "Illegal value \'$Args[$i+1]\' - optional value must be a number greater than 0";
+					$flag = 0;
+				}
+			}
+			else
+			{
+				$command->{Value} = 0;
+			}
 		}
 		elsif($Args[$i] eq "-t")
 		{
-			$flag = "t";
-			$data = $Args[++$i];
-			return (0, "Error: Illegal value \'$data\' - must be a number\n") unless $data =~ /^\d+$/;
+			my $data = $Args[++$i] || "";
+			if( $data =~ /^\d+$/ )
+			{
+				$command->{Value} = $data;
+			}
+			else
+			{
+				$message = "Illegal value \'$data\' - must provide a number greater than or equal to 0";
+				$flag = 0;
+			}
 		}
 		elsif($Args[$i] eq "-f")
 		{
-			$flag = "f";
-			$data = $Args[++$i];
-			return (0, "Error: Illegal value \'$data\' - must be a valid image\n") unless $data =~ /(gif|png|jpg|jpeg)$/i;
+			my $extensions = $Vars{extensions};
+			my $data = $Args[++$i];
+
+			if( $data =~ /($extensions)$/i )
+			{
+				$command->{Value} = $data;
+			}
+			else
+			{
+				$message = "Illegal value \'$data\' - must be a valid image";
+				$flag = 0;
+			}
 		}
 		elsif($Args[$i] eq "-d")
 		{
-			$flag = "d";
-			$data = $Args[++$i];
-			return (0, "Error: Illegal value \'$data\' - must be a valid directory\n") unless -d $data;
+			my $data = $Args[++$i];
+			if( -d $data )
+			{
+				$command->{Value} = $data;
+			}
+			else
+			{
+				$message = "Illegal value \'$data\' - must be a valid directory";
+				$flag = 0;
+			}
 		}
 		elsif($Args[$i] eq "-l")
 		{
-			$flag = "l";
-			$data = $Args[++$i];
-			return (0, "Error: Illegal value \'$data\' - must be a 0 or 1\n") unless( ($data == 0) || ($data == 1) );
+			my $data = $Args[++$i];
+			if( $data =~ /0|1/ )
+			{
+				$command->{Value} = $data;
+			}
+			else
+			{
+				$message = "Illegal value \'$data\' - must be a 0 or 1";
+				$flag = 0;
+			}
 		}
 		elsif($Args[$i] eq "-s")
 		{
-			$flag = "s";
-			$data = $Args[++$i];
-			return (0, "Error: Illegal value \'$data\' - must be a number between 0 and 100\n") unless $data >= 0;
+			my $data = $Args[++$i];
+			if( $data > 0 )
+			{
+				$command->{Value} = $data;
+			}
+			else
+			{
+				$message = "Illegal value \'$data\' - must be a number greater than 0";
+				$flag = 0;
+			}
 		}
+
+		# if the flag is set, add the 
+		# command to the comman queue
+		if( $flag )
+		{
+			push @Queue, $command;
+		}
+
+		# otherwise, return the the flag
+		# and message to the caller
 		else
 		{
-			return (0, "Error: Illegal value \'" . $Args[$i] . "\'\n");
+			return ($flag, $message);
 		}
-			
-		push @Query, "$flag:$data";
 	}
 
-	return (1, join(",", @Query) . "\n");
+	unshift @Queue, "UPDATE";
+
+	# build message to send to the server...
+	my $dumper = new Data::Dumper([\@Queue]);
+	$dumper->Purity(1);
+	$dumper->Indent(1);
+	$dumper->Terse(1);
+
+	my $command = $dumper->Dump();
+	$command =~ s/\n//g;
+
+	return ($flag, $command);
 }
 
+# method return a code and a message
+# 
+# code can be one of 3 values:
+# 0 - an error was encountered while parsing command line arguments
+# 1 - parsing successful 
+# 2 - parsing successful - client requested data, do not reset timers
 sub updateRunTimeVariables
 {
-	my ($cmd, $Vars) = @_;
+	my (@Commands) = @_;
 
-	# if given cmd is empty, return
-	#
-	return if $cmd =~ /^\n?$/;
+	my %NewVars;
+	my $flag = 1;
+	my $message = "";
 
-	# parse through given array and update given values
+	# parse through array and update given values
 	#
-	foreach my $pair (split ",", $cmd)
+	foreach my $Cmd ( @Commands )
 	{
-		# split up pair into flag and data
-		#
-		my ($flag, $data) = split ":", $pair;
-		$data ||= "";
-		$data =~ s/\n//;
-	
-		if($flag eq "n")
+		next unless ref $Cmd;
+		next if $Cmd->{Command} eq "-n";
+
+		if( $Cmd->{Command} eq "-i" )
 		{
-			# this is empty on purpose #
+			my @Cache = @{ $Vars{cache} };
+			$message = $Cache[ $#Cache - $Cmd->{Value} ];
+			$flag = 2;
+		}
+		elsif( $Cmd->{Command} eq "-p" )
+		{
+			my @Cache = @{ $Vars{cache} };
+
+   		# if the cache has more than one image in it
+   		# remove the current image so that we can get
+   		# at the previous image
+   		pop @Cache
+   			if scalar @Cache > 1;
+
+   		$NewVars{file} = pop @Cache;
+
+			# assign new cache array to temporary hash
+			$NewVars{cache} = \@Cache;
 		}
 			
 		# update delay value
-		elsif($flag eq "t")
+		elsif( $Cmd->{Command} eq "-t" )
 		{ 
-			$data >= 0 and $$Vars{"delay"} = $data;
+			if( $Cmd->{Value} >= 0 )
+			{
+				$NewVars{delay} = $Cmd->{Value}
+			}
+			else
+			{
+				$flag = 0;
+				$message = "Delay time must be greater than or equal to 0";
+				last;
+			}
 		}
 
 		# update file value
-		elsif($flag eq "f")
+		elsif( $Cmd->{Command} eq "-f" )
 		{
-			if(-e $data)
+			if( -e $Cmd->{Value} )
 			{
-				$$Vars{"file"} = $data;
+				$NewVars{file} = $Cmd->{Value};
 			}
-			elsif(-e $$Vars{"directory"} . "/" . $data)
+			elsif( -e $Vars{directory} . "/" . $Cmd->{Value} )
 			{
-				$$Vars{"file"} = $$Vars{"directory"} . "/" . $data;
+				$NewVars{"file"} = $Vars{directory} . "/" . $Cmd->{Value};
+			}
+			else
+			{
+				$flag = 0;
+				$message = "File does not exist";
+				last;
 			}
 		}
 
 		# update directory value
-		elsif($flag eq "d")
+		elsif( $Cmd->{Command} eq "-d" )
 		{
-			(-d "$data") and $$Vars{"directory"} = $data;
+			if( -d $Cmd->{Value} )
+			{
+				$Vars{directory} = $Cmd->{Value}
+			}
+			else
+			{
+				$flag = 0;
+				$message = "Directory does not exist";
+				last;
+			}
 		}
 
 		# update log value
-		elsif($flag eq "l")
+		elsif( $Cmd->{Command} eq "-l" )
 		{
-			($data == 0 || $data == 1) and $$Vars{"log"} = $data;
+			if( $Cmd->{Value} =~ /0|1/ )
+			{
+				$Vars{log} = $Cmd->{Value}
+			}
+			else
+			{
+				$flag = 0;
+				$message = "Value passed to log must be 0 or 1";
+				last;
+			}
 		}
 
 		# update max log count value
-		elsif($flag eq "s")
+		elsif( $Cmd->{Command} eq "-s" )
 		{
-			($data >= 0 && $data <= 100) and $$Vars{"size"} = $data;
+			if( $Cmd->{Value} > 0 )
+			{
+				$Vars{size} = $Cmd->{Value}
+			}
+			else
+			{
+				$flag = 0;
+				$message = "Size must be greater than 0";
+				last;
+			}
 		}
 
 		# oops, unknown command line parameter
 		else 
 		{ 
-			return "0:Unknown parameter -$flag.\n"; 
+			$flag = 0;
+			$message = "Unknown parameter " . $Cmd->{Command} . "\n";
+			last;
+		}
+
+		last unless $flag;
+	}
+
+	# everything ok, update master variable list
+	if( $flag )
+	{
+		foreach my $key ( keys %NewVars )
+		{
+			$Vars{$key} = $NewVars{$key};
 		}
 	}
 
-	return "1\n";
+	return ($flag, $message);
 }
 
 sub displayOptions
@@ -378,40 +612,44 @@ sub displayOptions
 	# print out command line options in friendly,
 	# human readable format
 	# 
-	print $error .
-			"-----------------------------------------------------------------------------\n" .
-			"xfcedd " . $version . " by Kier Elliott.\n" .
+	print "Error: $error\n" .
+			"-----------------------------------------------------------------------------\n"
+			if $error;
+
+	print "xfcedd " . $version . " by Kier Elliott.\n" .
 			"This software comes with ABSOLUTELY NO WARRANTY.\n" .
 			"Usage:  xfcedd [-k | -v | -h | -n | -t <time_delay> -d <image_directory>\n" .
 			"                          -f <file_name> -l <boolean> -s <log_size> ]\n" . 
 			"   (Put filenames or directories in single quotes (') )\n" .
 			"   -k   Kill running daemon\n" .
-			"   -v   Print our version information\n" .
+			"   -v   Print version information\n" .
 			"   -h   Display this message\n" .
 			"   -t   Set time delay (in seconds) daemon waits before choosing new image\n" .
 			"   -f   Set current/startup image.\n" .
 			"   -d   Set current/startup image directory.\n" .
 			"   -n   Instruct daemon to select next random image and reset timer\n" .
+			"   -p   Instruct daemon to display the previous image and reset timer\n" .
+			"   -i   Display numbered image from cache. Integer value is optional, defaults to 0\n" .
 			"   -l   Turn logging on (1) or off (0).\n" .
-			"   -s   Set size of log, must be between 0 and 100.\n" .
+			"   -s   Set size of log, must be greater than 0.\n" .
 			"\n";
 }
 
 sub updateDesktop
 {
-	my ($Events, $Vars) = @_;
+	my ($Events) = @_;
 
 	# get new image
 	#
 	my $file;
-	if($$Vars{"file"})
+	if($Vars{"file"})
 	{
-		$file = $$Vars{"file"};
-		$$Vars{"file"} = "";
+		$file = $Vars{"file"};
+		$Vars{"file"} = "";
 	}
 	else
 	{
-		$file = _chooseRandomImage($$Vars{"directory"}, $$Vars{"cache"});		
+		$file = _chooseRandomImage($Vars{"directory"}, $Vars{"cache"});		
 	}
 
 	# update desktop using new image...
@@ -420,11 +658,26 @@ sub updateDesktop
 
 	# cache image selection
 	#
-	_updateCache($file, $$Vars{"size"}, $$Vars{"cache"});
+	_updateCache($file, $Vars{"size"}, $Vars{"cache"});
 
-	_writeToLog("Selected new desktop image: $file\n", $log_file, $$Vars{"size"}) if $$Vars{"log"};
+	_writeToLog("Selected new desktop image: $file\n", $log_file, $Vars{"size"}) if $Vars{"log"};
 
 	return undef;
+}
+
+sub readConfigFile
+{
+	my ($file) = @_;
+
+	if( -e $file )
+	{
+		my $Config = do $file;
+
+		foreach my $key ( keys %$Config )
+		{
+			$Vars{$key} = $Config->{$key};
+		}
+	}
 }
 
 sub _chooseRandomImage
