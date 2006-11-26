@@ -200,7 +200,8 @@ sub startDaemon
 	# create event watchers...
 	#
 	my %Events;
-	%Events = (
+	%Events = 
+	(
 		"main"  => event_new($server, Event::Lib->EV_READ, \&clientHandler, \%Events),
    	"timer" => timer_new(sub { timerHandler(\%Events); }),
    	"int"   => signal_new(SIGINT, sub { terminateEventWatchers(\%Events); }),
@@ -262,6 +263,12 @@ sub clientHandler
 			my $Cmd = $Commands->[1];
    		if( $Cmd->{Command} eq "-k" )
    		{
+				# Get next image and update image link
+				# Note: Don't call _refreshDesktop.  This will ensure that the 
+				# next time daemon/xfce starts a new image will be displayed
+				my $file = _getNextImage($Vars{"directory"}, $Vars{"cache"});		
+				updateImageLink($file);
+
 				$kill = 1;
 				$response = "Server shutdown complete";
    			terminateEventWatchers($Events);
@@ -306,14 +313,25 @@ sub timerHandler
 		$$Events{"timer"}->add($Vars{"delay"});
 	}
 
+	# update image link
+	#
+	updateImageLink();
+
 	# update display!
 	#
-	updateDesktop($Events);
+	updateDesktop($Events)
+		if $Vars{"file"};
 }
 
 sub terminateEventWatchers
 {
 	my ($Events) = @_;
+
+	# Get next image and update image link
+	# Note: Don't call _refreshDesktop.  This will ensure that the 
+	# next time daemon/xfce starts a new image will be displayed
+	my $file = _getNextImage($Vars{"directory"}, $Vars{"cache"});		
+	updateImageLink($file);
 
 	foreach my $event (values %{$Events})
 	{
@@ -486,6 +504,10 @@ sub updateRunTimeVariables
 			$message = $Cache[ $#Cache - $Cmd->{Value} ];
 			$flag = 2;
 		}
+		elsif( $Cmd->{Command} eq "-n" )
+		{
+			$NewVars{file} = _getNextImage($Vars{"directory"}, $Vars{"cache"});		
+		}
 		elsif( $Cmd->{Command} eq "-p" )
 		{
 			my @Cache = @{ $Vars{cache} };
@@ -639,22 +661,21 @@ sub updateDesktop
 {
 	my ($Events) = @_;
 
-	# get new image
+	# call xfdesktop and update image
 	#
-	my $file;
-	if($Vars{"file"})
-	{
-		$file = $Vars{"file"};
-		$Vars{"file"} = "";
-	}
-	else
-	{
-		$file = _chooseRandomImage($Vars{"directory"}, $Vars{"cache"});		
-	}
+	system("xfdesktop");
 
-	# update desktop using new image...
-	#
-	_refreshDesktop($file);
+	return undef;
+}
+
+sub updateImageLink
+{
+	my ($file) = @_;
+	$file ||= $Vars{"file"};
+
+	return unless $file;
+
+	system("ln -sf \'$file\' $ENV{HOME}/.config/xfce4/xfcedd/.desktopImage");
 
 	# cache image selection
 	#
@@ -662,7 +683,7 @@ sub updateDesktop
 
 	_writeToLog("Selected new desktop image: $file\n", $log_file, $Vars{"size"}) if $Vars{"log"};
 
-	return undef;
+	return;
 }
 
 sub readConfigFile
@@ -680,61 +701,57 @@ sub readConfigFile
 	}
 }
 
-sub _chooseRandomImage
+sub _getNextImage
 {
 	my ($dir, $Cache) = @_;
 	my $file;
 	
-	# get a directory listing of all images in given directory
-	# remove '.', '..', and all files that aren't gif, png, or jpg
-	#
-	opendir(IMAGES, $dir);
-	my @Files = grep { $_ =~ /\.(gif|png|jpg|jpeg)$/i } readdir(IMAGES);
-	closedir(IMAGES);
-
-	my $max = scalar(@Files);
-	if($max == 1)
+	if($Vars{"file"})
 	{
-		$file =  "$dir/" . $Files[0];
+		$file = $Vars{"file"};
+		$Vars{"file"} = "";
 	}
-	elsif($max > 1)
+	else
 	{
-		# randomly choose an image from the given directory
-		# call checkCache to ensure that the image hasn't been
-		# recently used...
+		# get a directory listing of all images in given directory
+		# remove '.', '..', and all files that aren't gif, png, or jpg
 		#
-		if($max == scalar @{$Cache})
+		opendir(IMAGES, $dir);
+		my @Files = grep { $_ =~ /\.(gif|png|jpg|jpeg)$/i } readdir(IMAGES);
+		closedir(IMAGES);
+
+		my $max = scalar(@Files);
+		if($max == 1)
 		{
-			$file = $$Cache[0];
-			@{$Cache} = splice(@{$Cache}, sprintf("%.0f", scalar(@{$Cache})/2));
+			$file =  "$dir/" . $Files[0];
 		}
-		else
+		elsif($max > 1)
 		{
-			do
+			# randomly choose an image from the given directory
+			# call checkCache to ensure that the image hasn't been
+			# recently used...
+			#
+			if($max == scalar @{$Cache})
 			{
-				# generate a random number between 0 and max...
-				#
-				my $rand = rand ($max - 1);
-				$rand = sprintf("%.0f", $rand); # round to nearest integer
-				$file = "$dir/" . $Files[$rand];
+				$file = $$Cache[0];
+				@{$Cache} = splice(@{$Cache}, sprintf("%.0f", scalar(@{$Cache})/2));
 			}
-			while(_checkCache($file, $Cache));
+			else
+			{
+				do
+				{
+					# generate a random number between 0 and max...
+					#
+					my $rand = rand ($max - 1);
+					$rand = sprintf("%.0f", $rand); # round to nearest integer
+					$file = "$dir/" . $Files[$rand];
+				}
+				while(_checkCache($file, $Cache));
+			}
 		}
 	}
 	
 	return $file;
-}
-
-sub _refreshDesktop
-{
-	my ($file) = @_;
-
-	# call xfdesktop and update image
-	#
-	system("ln -sf \'$file\' $ENV{HOME}/.config/xfce4/xfcedd/.desktopImage");
-	system("xfdesktop");
-
-	return undef;
 }
 
 sub _checkCache
